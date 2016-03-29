@@ -25,19 +25,7 @@ app = Flask(__name__, template_folder=tmpl_dir)
 
 
 #
-# The following uses the sqlite3 database test.db -- you can use this for debugging purposes
-# However for the project you will need to connect to your Part 2 database in order to use the
-# data
-#
-# XXX: The URI should be in the format of: 
-#
-#     postgresql://USER:PASSWORD@w4111db.eastus.cloudapp.azure.com/username
-#
-# For example, if you had username ewu2493, password foobar, then the following line would be:
-#
-#     DATABASEURI = "postgresql://ewu2493:foobar@w4111db.eastus.cloudapp.azure.com/ewu2493"
-#
-DATABASEURI = "sqlite:///test.db"
+DATABASEURI = "postgresql://ms5072:DYCHUK@w4111db.eastus.cloudapp.azure.com/ms5072"
 
 
 #
@@ -47,31 +35,145 @@ engine = create_engine(DATABASEURI)
 
 
 #
-# START SQLITE SETUP CODE
+# eql_filter - a helper function which creates SQL equality filters if value is not empty
+# keys - list of table keys
+# values - list of filtered values
+# pretext - what SQL pretext we use (by default AND, can be WHERE, ON, etc)
 #
-# after these statements run, you should see a file test.db in your webserver/ directory
-# this is a sqlite database that you can query like psql typing in the shell command line:
-# 
-#     sqlite3 test.db
-#
-# The following sqlite3 commands may be useful:
-# 
-#     .tables               -- will list the tables in the database
-#     .schema <tablename>   -- print CREATE TABLE statement for table
-# 
-# The setup code should be deleted once you switch to using the Part 2 postgresql database
-#
-engine.execute("""DROP TABLE IF EXISTS test;""")
-engine.execute("""CREATE TABLE IF NOT EXISTS test (
-  id serial,
-  name text
-);""")
-engine.execute("""INSERT INTO test(name) VALUES ('grace hopper'), ('alan turing'), ('ada lovelace');""")
-#
-# END SQLITE SETUP CODE
-#
+def eql_filter(keys,values,pretext=' AND '):
+  filters = []
+  for (k, v) in zip(keys,values):
+    if v is not '':
+      filters.append("{0}='{1}'".format(k,v))
+  if filters:
+    return pretext + ' AND '.join(filters)
+  else:
+    return ''
 
+#
+# Same as eql_filter, but now it does not add the value to the SQL string, 
+# it adds it to another list that is also returned.
+#
+def eql_filter_safer(keys,values,pretext=' AND '):
+  filters = []
+  params = []
+  for (k, v) in zip(keys,values):
+    if v is not '':
+      filters.append("{0}={1}".format(k,'%s'))
+      params.append(v)
+  if filters:
+    return pretext + ' AND '.join(filters), params
+  else:
+    return '',None
 
+#
+# sql_builder - create sql queries from query token and additional information
+# qtoken - The query token identifying the relevant SQL query
+# info - List of additional information which can be used in the SQL query
+#
+def sql_builder(qtoken,info):
+  if qtoken=='TZIPS':
+    query = """
+    SELECT 
+      zip,
+      sum(face_value) as total_debt,
+      COUNT(DISTINCT p.acct_no) as no_properties,
+      tax_year
+    FROM Properties p, Tax_Certificates c 
+    WHERE c.acct_no=p.acct_no
+    {0}
+    GROUP BY zip,tax_year
+    ORDER BY 2 DESC
+    """
+  elif qtoken=='PROP':
+    query = """
+    SELECT p.acct_no ,p.zip ,p.address, COUNT(c.acct_no) as no_certs, SUM(c.face_value) as total_debt
+    FROM Properties p, Tax_Certificates c
+    WHERE c.acct_no=p.acct_no
+    {0}
+    GROUP BY p.acct_no ,p.zip ,p.address
+    ORDER BY no_certs DESC
+    """
+  elif qtoken=='CERTS':
+    query = """
+    SELECT c.cert_id,c.acct_no,c.batch_id,c.auction_id,
+          c.face_value,c.tax_year,c.cert_year,COUNT(b.bidder_id) as no_bids
+    FROM Tax_Certificates c
+    LEFT OUTER JOIN Bids b ON c.cert_id=b.cert_id
+    {0}
+    GROUP BY c.cert_id,c.acct_no,c.batch_id,c.auction_id,
+          c.face_value,c.tax_year,c.cert_year
+    ORDER BY cert_id
+    """
+  elif qtoken=='BIDS':
+    query = """
+    SELECT
+      bidder_id,
+      cert_id,
+      acct_no,
+      tax_year,
+      bid_amount,
+      winning
+    FROM Bids
+    {0}
+    """
+  elif qtoken=='BIDDER':
+    query = """
+    SELECT
+      bidder_id,
+      bidder_name,
+      address,
+      business_name,
+      city,
+      state,
+      zip
+    FROM Bidders
+    {0}
+    """
+  elif qtoken=='AUCTIONS':
+    query = """
+    SELECT
+      a.auction_id,
+      a.issuer_url,
+      a.start_date,
+      a.end_date,
+      a.min_deposit,
+      a.bid_inc,
+      a.min_bid,
+      a.max_bid,
+      i.county,
+      (select count(*) from Batches where auction_id = a.auction_id) batch_count
+    FROM Auctions a
+    INNER JOIN Issuers i on i.issuer_url=a.issuer_url
+    {0}
+    """
+  elif qtoken=='ISSUERS':
+    query = """
+    SELECT
+      issuer_url,
+      county,
+      state
+    FROM Issuers
+    {0}
+    """
+  elif qtoken=='BATCHES':
+    query = """
+    SELECT
+      b.batch_id,
+      b.batch_time,
+      b.auction_id,
+      (select count(*) from Tax_Certificates c WHERE c.batch_id=b.batch_id AND c.auction_id=b.auction_id) as total_certificates
+    FROM Batches b
+    {0}
+    """
+  else:
+    return false
+  return query.format(*info)
+
+def get_args(args,params):
+  result=[]
+  [result.append(args.get(p,'')) for p in params]
+  return result
 
 @app.before_request
 def before_request():
@@ -100,99 +202,210 @@ def teardown_request(exception):
   except Exception as e:
     pass
 
-
-#
-# @app.route is a decorator around index() that means:
-#   run index() whenever the user tries to access the "/" path using a GET request
-#
-# If you wanted the user to go to e.g., localhost:8111/foobar/ with POST or GET then you could use
-#
-#       @app.route("/foobar/", methods=["POST", "GET"])
-#
-# PROTIP: (the trailing / in the path is important)
-# 
-# see for routing: http://flask.pocoo.org/docs/0.10/quickstart/#routing
-# see for decorators: http://simeonfranklin.com/blog/2012/jul/1/python-decorators-in-12-steps/
-#
+# Show static index page
 @app.route('/')
 def index():
-  """
-  request is a special object that Flask provides to access web request information:
+  return render_template("index.html")
 
-  request.method:   "GET" or "POST"
-  request.form:     if the browser submitted a form, this contains the data in the form
-  request.args:     dictionary of URL arguments e.g., {a:1, b:2} for http://localhost?a=1&b=2
+# Tax Certificates page
+@app.route('/tax_certs/', methods=['POST', 'GET'])
+def certs():
+  params = ['acct_no','tax_year','batch_id','auction_id']
+  sql_params=[]
+  vals = get_args(request.args,params)
+  params[0] = 'c.acct_no'
+  info=[]
+  sql_str_filter, _params = eql_filter_safer(params,vals, ' WHERE ')
+  info.append(sql_str_filter)
+  sql_params.append(_params)
+  
+  query = sql_builder('CERTS',info)
+  print "info =>",info
+  print "built query =>", query
 
-  See its API: http://flask.pocoo.org/docs/0.10/api/#incoming-request-data
-  """
+  cursor = g.conn.execute(query, tuple(sql_params))
 
-  # DEBUG: this is debugging code to see what request looks like
-  print request.args
-
-
-  #
-  # example of a database query
-  #
-  cursor = g.conn.execute("SELECT name FROM test")
-  names = []
+  certificates = []
   for result in cursor:
-    names.append(result['name'])  # can also be accessed using result[0]
+    certificates.append(result)  # can also be accessed using result[0]
   cursor.close()
 
-  #
-  # Flask uses Jinja templates, which is an extension to HTML where you can
-  # pass data to a template and dynamically generate HTML based on the data
-  # (you can think of it as simple PHP)
-  # documentation: https://realpython.com/blog/python/primer-on-jinja-templating/
-  #
-  # You can see an example template in templates/index.html
-  #
-  # context are the variables that are passed to the template.
-  # for example, "data" key in the context variable defined below will be 
-  # accessible as a variable in index.html:
-  #
-  #     # will print: [u'grace hopper', u'alan turing', u'ada lovelace']
-  #     <div>{{data}}</div>
-  #     
-  #     # creates a <div> tag for each element in data
-  #     # will print: 
-  #     #
-  #     #   <div>grace hopper</div>
-  #     #   <div>alan turing</div>
-  #     #   <div>ada lovelace</div>
-  #     #
-  #     {% for n in data %}
-  #     <div>{{n}}</div>
-  #     {% endfor %}
-  #
-  context = dict(data = names)
+  context = dict(certs = certificates)
+
+  return render_template("tax_certs.html", **context)
+
+@app.route('/properties/', methods=['POST', 'GET'])
+def properties():
+  info=[]
+  sql_params=[]
+  params = ['acct_no','zip']
+  vals = get_args(request.args,params)
+  params[0] = 'c.acct_no'
+  #Adds filter for zip
+  sql_str_filter, _params = eql_filter_safer(params,vals)
+  info.append(sql_str_filter)
+  sql_params.append(_params)
+  
+
+  query = sql_builder('PROP',info)
+
+  print "info =>",info
+  print "built query =>", query
+
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  properties = []
+  for result in cursor:
+    properties.append(result)  # can also be accessed using result[0]
+  cursor.close()
+
+  context = dict(props = properties)
+
+  return render_template("properties.html", **context)
 
 
-  #
-  # render_template looks in the templates/ folder for files.
-  # for example, the below file reads template/index.html
-  #
-  return render_template("index.html", **context)
+@app.route('/topzips/', methods=['POST', 'GET'])
+def zips():
+  info=[]
+  sql_params=[]
+  selected_year = request.args.get('tax_year','')
+  #Adds filter for tax year
+  sql_str_filter, params = eql_filter_safer(['tax_year'],[selected_year])
+  info.append(sql_str_filter)
+  sql_params.append(params)
 
-#
-# This is an example of a different path.  You can see it at
-# 
-#     localhost:8111/another
-#
-# notice that the functio name is another() rather than index()
-# the functions for each app.route needs to have different names
-#
-@app.route('/another')
-def another():
-  return render_template("anotherfile.html")
+  query = sql_builder('TZIPS',info)
+
+  print "info =>",info
+  print "built query =>", query
+
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  zipcodes = []
+  for result in cursor:
+    zipcodes.append(result)  # can also be accessed using result[0]
+  cursor.close()
+
+  cursor = g.conn.execute("SELECT DISTINCT tax_year FROM Tax_Certificates ORDER BY tax_year DESC")  
+
+  tax_years = []
+  for result in cursor:
+    tax_years.append(result)  # can also be accessed using result[0]
+  cursor.close()
+  if selected_year:
+    selected_year = int(selected_year)
+  else:
+    selected_year = 0
+  context = dict(zips = zipcodes, tyears = tax_years, selected_year=selected_year)
 
 
-# Example of adding new data to the database
-@app.route('/add', methods=['POST'])
-def add():
-  name = request.form['name']
-  g.conn.execute('INSERT INTO test VALUES (NULL, ?)', name)
-  return redirect('/')
+  return render_template("topzips.html", **context)
+
+@app.route('/bids/', methods=['POST', 'GET'])
+def bids():
+  info=[]
+  sql_params=[]
+  
+  sql_str_filter, params = eql_filter_safer(['cert_id'],[request.args.get('cert_id','')],' WHERE ')
+  info.append(sql_str_filter)
+  sql_params.append(params)
+  query = sql_builder('BIDS',info)
+
+  print "info =>",info
+  print "built query =>", query
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  allbids = []
+  for result in cursor:
+    allbids.append(result)  # can also be accessed using result[0]
+  cursor.close()
+  context = dict(bids = allbids)
+  return render_template("bids.html", **context)
+  
+@app.route('/bidders/', methods=['POST', 'GET'])
+def bidders():
+  info=[]
+  sql_params=[]
+  
+  sql_str_filter, params = eql_filter_safer(['bidder_id'],[request.args.get('bidder_id','')],' WHERE ')
+  info.append(sql_str_filter)
+  sql_params.append(params)
+  query = sql_builder('BIDDER',info)
+
+  print "info =>",info
+  print "built query =>", query
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  rows = []
+  for result in cursor:
+    rows.append(result)  # can also be accessed using result[0]
+  cursor.close()
+  context = dict(rows = rows)
+  return render_template("bidders.html", **context)
+  
+@app.route('/auctions/', methods=['POST', 'GET'])
+def auctions():
+  info=[]
+  sql_params=[]
+  
+  sql_str_filter, params = eql_filter_safer(['auction_id'],[request.args.get('auction_id','')],' WHERE ')
+  info.append(sql_str_filter)
+  sql_params.append(params)
+  query = sql_builder('AUCTIONS',info)
+
+  print "info =>",info
+  print "built query =>", query
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  rows = []
+  for result in cursor:
+    rows.append(result)  # can also be accessed using result[0]
+  cursor.close()
+  context = dict(rows = rows)
+  return render_template("auctions.html", **context)
+
+@app.route('/issuers/', methods=['POST', 'GET'])
+def issuers():
+  info=[]
+  sql_params=[]
+  
+  sql_str_filter, params = eql_filter_safer(['issuer_url'],[request.args.get('issuer_url','')],' WHERE ')
+  info.append(sql_str_filter)
+  sql_params.append(params)
+  query = sql_builder('ISSUERS',info)
+
+  print "info =>",info
+  print "built query =>", query
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  rows = []
+  for result in cursor:
+    rows.append(result)  # can also be accessed using result[0]
+  cursor.close()
+  context = dict(rows = rows)
+  return render_template("issuers.html", **context)
+
+
+@app.route('/batches/', methods=['POST', 'GET'])
+def batches():
+  info=[]
+  sql_params=[]
+  
+  sql_str_filter, params = eql_filter_safer(['batch_id'],[request.args.get('batch_id','')],' WHERE ')
+  info.append(sql_str_filter)
+  sql_params.append(params)
+  query = sql_builder('BATCHES',info)
+
+  print "info =>",info
+  print "built query =>", query
+  cursor = g.conn.execute(query, tuple(sql_params))
+
+  rows = []
+  for result in cursor:
+    rows.append(result)  # can also be accessed using result[0]
+  cursor.close()
+  context = dict(rows = rows)
+  return render_template("batches.html", **context)
 
 
 @app.route('/login')

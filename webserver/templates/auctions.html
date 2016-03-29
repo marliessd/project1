@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Auctions{% endblock %}
+
+{% block content %}
+    <table class="table table-striped table-condensed">
+      <tr>
+        <th>Auction ID</th>
+        <th>Issuer</th>
+        <th>Start Date</th>
+        <th>End Date</th>
+        <th>Min Deposit</th>
+        <th>Bid increment</th>
+        <th>Min bid ammount</th>
+        <th>Max bid ammount</th>
+        <th>Batch Count</th>
+      </tr>
+    {% for row in rows %}
+    <tr>
+      <td>{{row.auction_id}}</td>
+      <td><a href="/issuers/?issuer_url={{row.issuer_url}}">{{row.county}}</a></td>
+      <td>{{row.start_date}}</td>
+      <td>{{row.end_date}}</td>
+      <td>{{row.min_deposit}}</td>
+      <td>{{row.bid_inc}}</td>
+      <td>{{row.min_bid}}</td>
+      <td>{{row.max_bid}}</td>
+      <td>{% if row.batch_count > 0 %}<a href="/batches/?auction_id={{row.auction_id}}">{{row.batch_count}}</a>
+      {% else %}0{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </table>
+{% endblock %}

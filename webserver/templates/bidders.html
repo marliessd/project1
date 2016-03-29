@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Bidders{% endblock %}
+
+{% block content %}
+    <table class="table table-striped table-condensed">
+      <tr>
+        <th>Bidder ID</th>
+        <th>Business Name</th>
+        <th>City</th>
+        <th>State</th>
+        <th>Zip</th>
+      </tr>
+    {% for row in rows %}
+    <tr>
+      <td>{{row.bidder_id}}</td>
+      <td>{{row.business_name}}</td>
+      <td>{{row.city}}</td>
+      <td>{{row.state}}</td>
+      <td>{{row.zip}}</td>
+    </tr>
+    {% endfor %}
+    </table>
+{% endblock %}

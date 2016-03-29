@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Properties{% endblock %}
+
+{% block content %}
+
+    <table class="table table-striped table-condensed">
+      <tr>
+        <th>Property ID</th>
+        <th>Address</th>
+        <th>Zip</th>
+        <th>Certificates</th>
+        <th>Total Debt</th>
+      </tr>
+    {% for prop in props %}
+    <tr>
+      <td>{{prop.acct_no}}</td>
+      <td><a href="https://www.google.com/maps/place/{{prop.address|urlize(50)}}" target="_blank">{{prop.address}}</a></td>
+      <td>{{prop.zip}}</td>
+      <td><a href="/tax_certs/?acct_no={{prop.acct_no}}">{{prop.no_certs}}</a></td>
+      <td>{{prop.total_debt}}</td>
+    </tr>
+    {% endfor %}
+    </table>
+
+{% endblock %}

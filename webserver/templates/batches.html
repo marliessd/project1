@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Batches{% endblock %}
+
+{% block content %}
+    <table class="table table-striped table-condensed">
+      <tr>
+        <th>Batch ID</th>
+        <th>Batch time</th>
+        <th>Auction Id</th>
+        <th>Total certificates</th>
+      </tr>
+      </tr>
+    {% for row in rows %}
+    <tr>
+      <td>{{row.batch_id}}</td>
+      <td>{{row.batch_time}}</td>
+      <td><a href="/auctions/?auction_id={{row.auction_id}}">{{row.auction_id}}</a></td>
+      <td>{% if row.total_certificates > 0 %}<a href="/tax_certs/?batch_id={{row.batch_id}}&auction_id={{row.auction_id}}">{{row.total_certificates}}</a>
+      {% else %}0{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </table>
+{% endblock %}
